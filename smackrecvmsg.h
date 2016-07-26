@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007 Casey Schaufler <casey@schaufler-ca.com>
+ * Copyright (C) 2016 Casey Schaufler <casey@schaufler-ca.com>
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -35,52 +35,4 @@
 #include <errno.h>
 #include "smacktools.h"
 
-int smackrecvmsg(char *cmd, int sock, struct msghdr *msgp, int flags,
-		 char *smack, int smacklen)
-{
-	struct cmsghdr *chp;
-	char *cp;
-	int len;
-	int rc;
-
-	rc = recvmsg(sock, msgp, flags);
-	if (rc < 0) {
-		fprintf(stderr, "%s: recvmsg error %s\n", cmd, strerror(errno));
-		return -1;
-	}
-	if (msgp->msg_controllen <= sizeof(struct cmsghdr)) {
-		fprintf(stderr, "%s %s out of control %ld <= %lu\n",
-			cmd, __func__, msgp->msg_controllen,
-			sizeof(struct cmsghdr));
-		return -1;
-	}
-	chp = CMSG_FIRSTHDR(msgp);
-	if (chp->cmsg_type != SCM_SECURITY) {
-		fprintf(stderr, "%s type not SCM_SECURITY\n", __func__);
-		return -1;
-	}
-	cp = (char *) CMSG_DATA(chp);
-	len = chp->cmsg_len - (cp - (char *)chp);
-	if (len < 1) {
-		fprintf(stderr, "%s cmsg_len %d too small\n", __func__,
-			(int)chp->cmsg_len);
-		return -1;
-	}
-	if (strlen(cp) != len) {
-		fprintf(stderr, "%s len %d not strlen %d \"%s\"\n", __func__,
-			len, (int)strlen(cp), cp);
-		return -1;
-	}
-	if (strlen(cp) >= smacklen) {
-		fprintf(stderr, "%s len %d too small, smack is %d\n", __func__,
-			smacklen, (int)strlen(cp));
-		return -1;
-	}
-	if (chp->cmsg_len >= smacklen) {
-		fprintf(stderr, "%s len %d too small, needed %d\n", __func__,
-			smacklen, (int)chp->cmsg_len);
-		return -1;
-	}
-	strcpy(smack, cp);
-	return 0;
-}
+int smackrecvmsg(char *, int, struct msghdr *, int, char *, int);

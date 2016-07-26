@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007 Casey Schaufler <casey@schaufler-ca.com>
+ * Copyright (C) 2016 Casey Schaufler <casey@schaufler-ca.com>
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -22,7 +22,7 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  */
 
 #include <stdio.h>
@@ -35,58 +35,49 @@
 #include <fcntl.h>
 
 #include <sys/socket.h>
-#include <netinet/in.h>
+#include <sys/un.h>
 #include <arpa/inet.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
 
 #include "smacktools.h"
 
-#define LOCAL_PORT	7001
-#define REMOTE_PORT	7000
-
 int
 main(int argc, char *argv[])
 {
 	int sock;
-	struct sockaddr_in sin;
-	unsigned short local_port = LOCAL_PORT;
-	unsigned short remote_port = REMOTE_PORT;
+	struct sockaddr_un sun;
 	char buffer[500];
-	char *remote_ip_str = THIS_HOST;
+	char *path = "/tmp/testsmackuds";
 	char *cp;
 	char *outlabels[20];
 	char plabel[SMACK_LABEL];
 	int i;
 	int oln;
-	int outfuzz[20];
-	int aln;
 	int nap = 1;
 	int count = 0;
 	int number = -1;
 	int olcount = 0;
-	int ofuzz = 0;
 
-	if ((i = smack_self(plabel)) < 0) {
-		fprintf(stderr, "%s: plabel read failure\n", argv[0]);
-		exit(1);
-	}
-	outfuzz[0] = 0;
+	oln = open("/proc/self/attr/smack.current", O_RDONLY);
+	if (oln < 0)
+		oln = open("/smack/current", O_RDONLY);
+	if (oln < 0)
+		oln = open("/proc/self/attr/current", O_RDONLY);
+	i = read(oln, plabel, SMACK_LABEL);
+	close(oln);
+	plabel[i] = '\0';
+	if ((cp = strchr(plabel, '\n')) != NULL)
+		*cp = '\0';
 	outlabels[0] = plabel;
+	/*
+	 *	fprintf(stderr, "plabel \"%s\"\n", plabel);
+	 */
 
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-c") == 0 ||
 		    strcmp(argv[i], "--count") == 0)
 			count = 1;
-		else if (strcmp(argv[i], "-f") == 0 ||
-			 strcmp(argv[i], "--fuzz") == 0)
-			ofuzz = atoi(argv[++i]);
-		else if (strcmp(argv[i], "-h") == 0 ||
-		    strcmp(argv[i], "--host") == 0)
-			remote_ip_str = argv[++i];
-		else if (strcmp(argv[i], "-p") == 0 ||
-			 strcmp(argv[i], "--port") == 0)
-			remote_port = atoi(argv[++i]);
 		else if (strcmp(argv[i], "-s") == 0 ||
 			 strcmp(argv[i], "--sleep") == 0)
 			nap = atoi(argv[++i]);
@@ -94,38 +85,22 @@ main(int argc, char *argv[])
 			 strcmp(argv[i], "--number") == 0)
 			number = atoi(argv[++i]);
 		else if (strcmp(argv[i], "-o") == 0 ||
-			 strcmp(argv[i], "--out") == 0) {
-			outfuzz[olcount] = 0;
+			 strcmp(argv[i], "--out") == 0)
 			outlabels[olcount++] = argv[++i];
-		} else
+		else if (strcmp(argv[i], "-p") == 0 ||
+			 strcmp(argv[i], "--path") == 0)
+			path = argv[++i];
+		else
 			fprintf(stderr, "arg \"%s\" ignored\n", argv[i]);
 	}
 	 
-	if ((sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) { 
-		fprintf(stderr, "%s: socket failure %s\n",
-			argv[0], strerror(errno));
+	if ((sock = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) { 
+		perror("socket");
 		exit(1);
 	}
 
-	bzero((char *)&sin, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(local_port);
-
-	for (i = 0; i < 1000; i++) {
-		if ((bind(sock, (struct sockaddr *)&sin, sizeof(sin))) >= 0)
-			break;
-		sin.sin_port = htons(local_port++);
-	}
-
-	if (i >= 1000) {
-		fprintf(stderr, "failed 1000 binds\n");
-		exit(1);
-	}
-
-	bzero((char *)&sin, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(remote_port);
-	sin.sin_addr.s_addr = inet_addr(remote_ip_str);
+	sun.sun_family = AF_UNIX;
+	strcpy(sun.sun_path, path);
 
 	for (cp = outlabels[0], oln = 0; number != 0; number--) {
 		if (count != 0)
@@ -133,34 +108,22 @@ main(int argc, char *argv[])
 		else
 			sprintf(buffer, "%s", outlabels[oln]);
 
-		aln = strlen(outlabels[oln]) + 1;
-		if (ofuzz) {
-			if (outfuzz[oln] > ofuzz)
-				outfuzz[oln] = 0 - ofuzz;
-			else
-				outfuzz[oln]++;
-			aln += outfuzz[oln];
+		if (olcount > 0) {
+			i = fsetxattr(sock, "security.SMACK64IPOUT",
+				outlabels[oln], strlen(outlabels[oln])+1, 0);
+			cp = outlabels[oln];
+			if (++oln >= olcount)
+				oln = 0;
+			if (i < 0) {
+				fprintf(stderr, "Failed \"%s\" ", cp);
+				perror("fsetxattr");
+			}
 		}
-
-		i = fsetxattr(sock, ATTR_OUT, outlabels[oln], aln, 0);
-		cp = outlabels[oln];
-		if (++oln >= olcount)
-			oln = 0;
-		if (i < 0) {
-			fprintf(stderr, "%s: Failed fsetxattr \"%s\" %s\n",
-				argv[0], cp, strerror(errno));
-		}
-
-		if (ofuzz)
-			i = sendto(sock, buffer, aln, 0,
-					(struct sockaddr *) &sin, sizeof(sin));
-		else
-			i = sendto(sock, buffer, strlen(buffer) + 1, 0,
-					(struct sockaddr *) &sin, sizeof(sin));
-
-		if (i < 0) {
-			fprintf(stderr, "%s: Failed sendto \"%s\" %s\n",
-				argv[0], cp, strerror(errno));
+			
+		if (sendto(sock, buffer, strlen(buffer) + 1, 0, 
+			   (struct sockaddr *) &sun, sizeof(sun)) < 0) {
+			fprintf(stderr, "Failed \"%s\" ", cp);
+			perror("sendto");
 		}
 
 		if (nap > 0)

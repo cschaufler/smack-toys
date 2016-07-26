@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007 Casey Schaufler <casey@schaufler-ca.com>
+ * Copyright (C) 2016 Casey Schaufler <casey@schaufler-ca.com>
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -22,7 +22,7 @@
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  */
 
 #include <stdio.h>
@@ -38,22 +38,22 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <linux/ip.h>
+#include <linux/un.h>
 #include <linux/udp.h>
 #include <linux/netlink.h>
 #include <linux/xattr.h>
 
+#include "smacktools.h"
 #include "smackrecvmsg.h"
 
 #define BUFFER_SIZE 500
-
-#define LOCAL_PORT	7000
 
 int
 main(int argc, char *argv[])
 {
 	int sock;
-	struct sockaddr_in sin;
-	unsigned short local_port = LOCAL_PORT;
+	struct sockaddr_un sun;
+	char *path = "/tmp/testsmackuds";
 	struct iphdr *ip_header;
 	struct udphdr *udp_header;
 	int tmp;
@@ -62,20 +62,18 @@ main(int argc, char *argv[])
 	int oadd;
 	unsigned char *oap = (unsigned char *)&oadd;
 	char peer[SMACK_LABEL];
-	char cpeer[SMACK_LABEL];
-	char rpeer[SMACK_LABEL];
 	char callno[SMACK_LABEL];
 	char from[SMACK_LABEL];
 	char *ipin = NULL;
 	int quiet = 0;
 	int special;
 	int right = 1;
-	int isone = 1;
+	int one = 1;
 	char buffer[BUFFER_SIZE];
 	char control[BUFFER_SIZE];
 	struct iovec iov = { buffer, sizeof(buffer) };
 	struct msghdr message = {
-		(void*)&sin, sizeof(sin), &iov, 1, control, BUFFER_SIZE, 0
+		(void*)&sun, sizeof(sun), &iov, 1, control, BUFFER_SIZE, 0
 	};
 
 	for (i = 1; i < argc; i++) {
@@ -83,58 +81,61 @@ main(int argc, char *argv[])
 		    strcmp(argv[i], "--ipin") == 0)
 			ipin = argv[++i];
 		if (strcmp(argv[i], "-p") == 0 ||
-		    strcmp(argv[i], "--port") == 0)
-			local_port = atoi(argv[++i]);
+		    strcmp(argv[i], "--path") == 0)
+			path = argv[++i];
 		if (strcmp(argv[i], "-q") == 0 ||
 		    strcmp(argv[i], "--quiet") == 0)
 			quiet = 1;
 	}
 
-	if ((sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) { 
-		fprintf(stderr, "%s: socket failure %s\n",
-			argv[0], strerror(errno));
+	if ((sock = socket(PF_UNIX, SOCK_DGRAM, 0)) < 0) { 
+		perror("socket");
 		exit(1);
 	}
 
-	bzero((char *)&sin, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(local_port);
+	bzero((char *)&sun, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	strcpy(sun.sun_path, path);
 
-	if (bind(sock, (struct sockaddr *)& sin, sizeof(sin)) < 0) {
-		fprintf(stderr, "%s: bind failure %s\n",
-			argv[0], strerror(errno));
+	unlink(path);
+
+	if (bind(sock, (struct sockaddr *)& sun, sizeof(sun)) < 0) {
+		perror("bind");
 		exit(1);
 	}
 
-        if (setsockopt(sock, SOL_IP, IP_PASSSEC, &isone, sizeof(isone)) < 0) {
-		fprintf(stderr, "%s: setsockopt IP_PASSEC failure %s\n",
-			argv[0], strerror(errno));
+	chmod(path, 0777);
+
+        if (setsockopt(sock, SOL_SOCKET, SO_PASSSEC, &one, sizeof(one)) < 0) {
+		perror("setsockopt IP_PASSEC");
 		exit(1);
 	}
   
 	if (ipin != NULL) {
-		tmp = fsetxattr(sock, ATTR_IN, ipin, strlen(ipin)+1, 0);
+		tmp = fsetxattr(sock, "security.SMACK64IPIN",
+				ipin, strlen(ipin)+1, 0);
 		if (tmp < 0)
-			fprintf(stderr, "%s: fsetxattr failure %s\n",
-				argv[0], strerror(errno));
+			perror("fsetxattr");
 		else
 			printf("security.SMACK64IPIN set = %d\n", tmp);
 	}
 
 	while ( 1 ) {
-		len = sizeof(sin);
-		bzero((char *)&sin, sizeof(sin));
+		len = sizeof(sun);
+		bzero((char *)&sun, sizeof(sun));
 		bzero(buffer, BUFFER_SIZE);
 		bzero(control, BUFFER_SIZE);
 		special = 0;
 
-		message.msg_namelen = sizeof(sin);
+		message.msg_namelen = sizeof(sun);
 		message.msg_controllen = BUFFER_SIZE;
 
 		strcpy(peer, "UNAVAILABLE");
-		smack_get_peer(argv[0], sock, cpeer, rpeer);
 		i = smackrecvmsg(argv[0], sock, &message, 0, peer,
 					sizeof(peer));
+		if (i < 0)
+			fprintf(stderr, "%s:%d smackrecvmsg failed\n",
+				__func__, __LINE__);
 
 		i = strlen(peer);
 		if (strncmp(buffer, peer, i) != 0)
@@ -143,13 +144,8 @@ main(int argc, char *argv[])
 			special = 1;
 
 		if (quiet == 0 || special != 0) {
-			oadd = sin.sin_addr.s_addr;
-			printf("From %u.%u.%u.%u port %d %d \"%s\" "
-			       "peer = \"%s\" (\"%s\" \"%s\")"
-			       "right %d\n",
-				oap[0], oap[1], oap[2], oap[3],
-				ntohs(sin.sin_port), i, buffer, peer,
-				cpeer, rpeer, right);
+			printf("Read \"%s\" peer = \"%s\" right %d\n",
+				buffer, peer, right);
 		}
 		if (special != 0)
 			right = 0;

@@ -28,12 +28,23 @@
 #
 
 PROGRAMS = \
-	smackin smackout
+	newsmack \
+	smackecho smacktomux \
+	smackin smackout \
+	smackudsin smackudsout \
+	smackspeedtest \
+	smackpolyport \
 
 default: ${PROGRAMS}
 
 clean:
 	rm -f ${PROGRAMS}
+
+newsmack: newsmack.c smacktools.h
+	cc -o newsmack newsmack.c
+
+smackecho: smackecho.c smacktools.h
+	cc -o smackecho smackecho.c
 
 smackin: smackin.c smackrecvmsg.c smacktools.h
 	cc -o smackin smackin.c smackrecvmsg.c
@@ -41,3 +52,17 @@ smackin: smackin.c smackrecvmsg.c smacktools.h
 smackout: smackout.c smacktools.h
 	cc -o smackout smackout.c
 
+smackpolyport: smackpolyport.c smacktools.h
+	cc -o smackpolyport smackpolyport.c
+
+smackspeedtest: smackspeedtest.c
+	cc -o smackspeedtest smackspeedtest.c
+
+smacktomux: smacktomux.c smacktools.h
+	cc -o smacktomux smacktomux.c
+
+smackudsin: smackudsin.c smackrecvmsg.c smacktools.h
+	cc -o smackudsin smackudsin.c smackrecvmsg.c
+
+smackudsout: smackudsout.c smacktools.h
+	cc -o smackudsout smackudsout.c

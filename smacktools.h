@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2007 Casey Schaufler <casey@schaufler-ca.com>
- * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -26,8 +25,12 @@
  * 
  */
 
+#ifndef SMACKTOOLS_H
+#define SMACKTOOLS_H
+
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/xattr.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <linux/ip.h>
@@ -147,3 +150,4 @@ static inline int smackfs_open(char *entry)
 	return -1;
 }
 
+#endif /* SMACKTOOLS_H */
